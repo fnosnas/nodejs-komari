@@ -20,12 +20,11 @@ const NEZHA_KEY = process.env.NEZHA_KEY || '';
 // --- Argo 变量 ---
 const ARGO_DOMAIN = process.env.ARGO_DOMAIN || '';
 const ARGO_AUTH = process.env.ARGO_AUTH || '';
-const ARGO_PORT = process.env.ARGO_PORT || 8001;
+const ARGO_PORT = 8001; // 与你 CF 控制台一致
 const CFIP = process.env.CFIP || 'cdns.doon.eu.org';
 const CFPORT = process.env.CFPORT || 443;
 const NAME = process.env.NAME || '';
 
-// 目录初始化
 if (!fs.existsSync(FILE_PATH)) fs.mkdirSync(FILE_PATH, { recursive: true });
 
 const npmName = "komari_agent";
@@ -36,7 +35,7 @@ const webPath = path.join(FILE_PATH, webName);
 const botPath = path.join(FILE_PATH, botName);
 const bootLogPath = path.join(FILE_PATH, 'boot.log');
 
-// 修正：访问根目录显示 Hello world!
+// 根目录确保显示 Hello world
 app.get("/", (req, res) => res.send("Hello world!"));
 
 async function getKomariUrl(arch) {
@@ -74,57 +73,56 @@ async function main() {
         await download('Komari', komariUrl, npmPath);
     }
 
-    // 启动 Xray：确保监听 ARGO_PORT 且回落到 3000 端口（显示 Hello world）
+    // 1. 启动 Xray
     if (fs.existsSync(webPath)) {
         const config = {
             log: { loglevel: 'none' },
-            inbounds: [{
-                port: ARGO_PORT, protocol: 'vless', 
-                settings: { clients: [{ id: UUID }], decryption: 'none', fallbacks: [{ dest: PORT }] },
-                streamSettings: { network: 'tcp' }
-            },
-            { port: 3002, listen: "127.0.0.1", protocol: "vless", settings: { clients: [{ id: UUID }] }, streamSettings: { network: "ws", wsSettings: { path: "/vless-argo" } } },
-            { port: 3003, listen: "127.0.0.1", protocol: "vmess", settings: { clients: [{ id: UUID }] }, streamSettings: { network: "ws", wsSettings: { path: "/vmess-argo" } } },
-            { port: 3004, listen: "127.0.0.1", protocol: "trojan", settings: { clients: [{ password: UUID }] }, streamSettings: { network: "ws", wsSettings: { path: "/trojan-argo" } } }],
+            inbounds: [
+                {
+                    port: ARGO_PORT, listen: "127.0.0.1", protocol: "vless",
+                    settings: { clients: [{ id: UUID }], decryption: "none" },
+                    streamSettings: { network: "ws", wsSettings: { path: "/vless-argo" } }
+                },
+                {
+                    port: 3003, listen: "127.0.0.1", protocol: "vmess",
+                    settings: { clients: [{ id: UUID }] },
+                    streamSettings: { network: "ws", wsSettings: { path: "/vmess-argo" } }
+                }
+            ],
             outbounds: [{ protocol: "freedom" }]
         };
         fs.writeFileSync(path.join(FILE_PATH, 'config.json'), JSON.stringify(config));
+        // 注意：这里去掉了 3000 端口的回落，让 Xray 只管节点，Argo 做分流
         exec(`nohup ${webPath} -c ${FILE_PATH}/config.json >/dev/null 2>&1 &`);
+        console.log("[System] Xray binary executed.");
     }
 
-    // 启动 Komari
+    // 2. 启动 Komari
     if (fs.existsSync(npmPath) && NEZHA_SERVER && NEZHA_KEY) {
         exec(`nohup ${npmPath} -e ${NEZHA_SERVER} -t ${NEZHA_KEY} >/dev/null 2>&1 &`);
     }
 
-    // 启动 Argo：流量打向 Xray 的入站端口 ARGO_PORT (8001)
+    // 3. 启动 Argo
     if (fs.existsSync(botPath)) {
-        let argoArgs = ARGO_AUTH.length > 120 
+        let argoArgs = ARGO_AUTH.match(/^[A-Z0-9a-z=]{120,250}$/) 
             ? `tunnel --no-autoupdate --protocol http2 run --token ${ARGO_AUTH}`
             : `tunnel --no-autoupdate --protocol http2 --logfile ${bootLogPath} --url http://localhost:${ARGO_PORT}`;
         exec(`nohup ${botPath} ${argoArgs} >/dev/null 2>&1 &`);
+        console.log("[System] Argo tunnel starting...");
     }
 
-    // 订阅生成
+    // 4. 生成链接
     setTimeout(() => {
         let domain = ARGO_DOMAIN;
-        if (!domain && fs.existsSync(bootLogPath)) {
-            const log = fs.readFileSync(bootLogPath, 'utf-8');
-            const match = log.match(/https?:\/\/([^ ]*trycloudflare\.com)/);
-            if (match) domain = match[1];
-        }
         if (domain) {
             const nodeName = NAME || 'Komari-Node';
             const vlessSub = `vless://${UUID}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${domain}&type=ws&host=${domain}&path=%2Fvless-argo#${nodeName}`;
-            const vmessSub = Buffer.from(JSON.stringify({ v: '2', ps: nodeName, add: CFIP, port: CFPORT, id: UUID, aid: '0', scy: 'none', net: 'ws', type: 'none', host: domain, path: '/vmess-argo', tls: 'tls', sni: domain })).toString('base64');
-            const trojanSub = `trojan://${UUID}@${CFIP}:${CFPORT}?security=tls&sni=${domain}&type=ws&host=${domain}&path=%2Ftrojan-argo#${nodeName}`;
-            
-            const fullSub = `${vlessSub}\n\nvmess://${vmessSub}\n\n${trojanSub}`;
+            const fullSub = `${vlessSub}`;
             app.get(`/${SUB_PATH}`, (req, res) => res.send(Buffer.from(fullSub).toString('base64')));
-            console.log(`[Success] Sub link: /${SUB_PATH}`);
+            console.log(`[Success] Node ready on ${domain}`);
         }
     }, 15000);
 }
 
 main().catch(e => console.error(e));
-app.listen(PORT, () => console.log(`Http server on port ${PORT}`));
+app.listen(PORT, () => console.log(`Express active on port ${PORT}`));
