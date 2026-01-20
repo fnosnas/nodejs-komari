@@ -36,33 +36,17 @@ const webPath = path.join(FILE_PATH, webName);
 const botPath = path.join(FILE_PATH, botName);
 const bootLogPath = path.join(FILE_PATH, 'boot.log');
 
-app.get("/", (req, res) => res.send("Service is active"));
+// 修正：访问根目录显示 Hello world!
+app.get("/", (req, res) => res.send("Hello world!"));
 
-/**
- * 自动获取 Komari 最新版本的下载链接
- */
 async function getKomariUrl(arch) {
     try {
-        console.log(`[System] Fetching latest Komari assets for ${arch}...`);
         const res = await axios.get('https://api.github.com/repos/komari-monitor/komari-agent/releases/latest', { timeout: 10000 });
-        const asset = res.data.assets.find(a => 
-            a.name.toLowerCase().includes('linux') && 
-            a.name.toLowerCase().includes(arch) &&
-            !a.name.endsWith('.sha256')
-        );
-        if (asset) {
-            console.log(`[System] Found latest version: ${res.data.tag_name}`);
-            return asset.browser_download_url;
-        }
-    } catch (e) {
-        console.error(`[System] GitHub API Error: ${e.message}, using fallback URL.`);
-    }
-    return `https://github.com/komari-monitor/komari-agent/releases/download/v1.1.40/komari-agent-linux-${arch}`;
+        const asset = res.data.assets.find(a => a.name.toLowerCase().includes('linux') && a.name.toLowerCase().includes(arch) && !a.name.endsWith('.sha256'));
+        return asset ? asset.browser_download_url : null;
+    } catch (e) { return `https://github.com/komari-monitor/komari-agent/releases/download/v1.1.40/komari-agent-linux-${arch}`; }
 }
 
-/**
- * 通用下载函数
- */
 async function download(name, url, savePath) {
     if (!url) return;
     try {
@@ -70,39 +54,35 @@ async function download(name, url, savePath) {
         const response = await axios({ method: 'get', url: url, responseType: 'stream', timeout: 60000 });
         response.data.pipe(writer);
         return new Promise((resolve, reject) => {
-            writer.on('finish', () => {
-                fs.chmodSync(savePath, 0o775);
-                console.log(`[OK] ${name} downloaded.`);
-                resolve();
-            });
+            writer.on('finish', () => { fs.chmodSync(savePath, 0o775); console.log(`[OK] ${name} downloaded.`); resolve(); });
             writer.on('error', reject);
         });
-    } catch (e) {
-        console.error(`[Error] ${name} download failed: ${e.message}`);
-    }
+    } catch (e) { console.error(`[Error] ${name} download failed: ${e.message}`); }
 }
 
 async function main() {
     const isArm = os.arch().includes('arm');
     const arch = isArm ? 'arm64' : 'amd64';
-    console.log(`[System] Architecture detected: ${arch}`);
-
-    let komariUrl = null;
-    if (NEZHA_SERVER && NEZHA_KEY) {
-        komariUrl = await getKomariUrl(arch);
-    }
-
+    
     const xrayUrl = isArm ? "https://arm64.ssss.nyc.mn/web" : "https://amd64.ssss.nyc.mn/web";
     const argoUrl = isArm ? "https://arm64.ssss.nyc.mn/bot" : "https://amd64.ssss.nyc.mn/bot";
     
     await download('Xray', xrayUrl, webPath);
     await download('Argo', argoUrl, botPath);
-    if (komariUrl) await download('Komari', komariUrl, npmPath);
+    if (NEZHA_SERVER && NEZHA_KEY) {
+        const komariUrl = await getKomariUrl(arch);
+        await download('Komari', komariUrl, npmPath);
+    }
 
+    // 启动 Xray：确保监听 ARGO_PORT 且回落到 3000 端口（显示 Hello world）
     if (fs.existsSync(webPath)) {
         const config = {
             log: { loglevel: 'none' },
-            inbounds: [{ port: ARGO_PORT, protocol: 'vless', settings: { clients: [{ id: UUID }], fallbacks: [{ path: "/vless-argo", dest: 3002 }, { path: "/vmess-argo", dest: 3003 }, { path: "/trojan-argo", dest: 3004 }] }, streamSettings: { network: 'tcp' } },
+            inbounds: [{
+                port: ARGO_PORT, protocol: 'vless', 
+                settings: { clients: [{ id: UUID }], decryption: 'none', fallbacks: [{ dest: PORT }] },
+                streamSettings: { network: 'tcp' }
+            },
             { port: 3002, listen: "127.0.0.1", protocol: "vless", settings: { clients: [{ id: UUID }] }, streamSettings: { network: "ws", wsSettings: { path: "/vless-argo" } } },
             { port: 3003, listen: "127.0.0.1", protocol: "vmess", settings: { clients: [{ id: UUID }] }, streamSettings: { network: "ws", wsSettings: { path: "/vmess-argo" } } },
             { port: 3004, listen: "127.0.0.1", protocol: "trojan", settings: { clients: [{ password: UUID }] }, streamSettings: { network: "ws", wsSettings: { path: "/trojan-argo" } } }],
@@ -110,22 +90,22 @@ async function main() {
         };
         fs.writeFileSync(path.join(FILE_PATH, 'config.json'), JSON.stringify(config));
         exec(`nohup ${webPath} -c ${FILE_PATH}/config.json >/dev/null 2>&1 &`);
-        console.log("[System] Xray started.");
     }
 
+    // 启动 Komari
     if (fs.existsSync(npmPath) && NEZHA_SERVER && NEZHA_KEY) {
         exec(`nohup ${npmPath} -e ${NEZHA_SERVER} -t ${NEZHA_KEY} >/dev/null 2>&1 &`);
-        console.log("[System] Komari agent started.");
     }
 
+    // 启动 Argo：流量打向 Xray 的入站端口 ARGO_PORT (8001)
     if (fs.existsSync(botPath)) {
         let argoArgs = ARGO_AUTH.length > 120 
             ? `tunnel --no-autoupdate --protocol http2 run --token ${ARGO_AUTH}`
             : `tunnel --no-autoupdate --protocol http2 --logfile ${bootLogPath} --url http://localhost:${ARGO_PORT}`;
         exec(`nohup ${botPath} ${argoArgs} >/dev/null 2>&1 &`);
-        console.log("[System] Argo started.");
     }
 
+    // 订阅生成
     setTimeout(() => {
         let domain = ARGO_DOMAIN;
         if (!domain && fs.existsSync(bootLogPath)) {
@@ -135,12 +115,16 @@ async function main() {
         }
         if (domain) {
             const nodeName = NAME || 'Komari-Node';
-            const subTxt = `vless://${UUID}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${domain}&type=ws&host=${domain}&path=%2Fvless-argo#${nodeName}`;
-            app.get(`/${SUB_PATH}`, (req, res) => res.send(Buffer.from(subTxt).toString('base64')));
-            console.log(`[Success] Subscription link ready at: /${SUB_PATH}`);
+            const vlessSub = `vless://${UUID}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${domain}&type=ws&host=${domain}&path=%2Fvless-argo#${nodeName}`;
+            const vmessSub = Buffer.from(JSON.stringify({ v: '2', ps: nodeName, add: CFIP, port: CFPORT, id: UUID, aid: '0', scy: 'none', net: 'ws', type: 'none', host: domain, path: '/vmess-argo', tls: 'tls', sni: domain })).toString('base64');
+            const trojanSub = `trojan://${UUID}@${CFIP}:${CFPORT}?security=tls&sni=${domain}&type=ws&host=${domain}&path=%2Ftrojan-argo#${nodeName}`;
+            
+            const fullSub = `${vlessSub}\n\nvmess://${vmessSub}\n\n${trojanSub}`;
+            app.get(`/${SUB_PATH}`, (req, res) => res.send(Buffer.from(fullSub).toString('base64')));
+            console.log(`[Success] Sub link: /${SUB_PATH}`);
         }
     }, 15000);
 }
 
-main().catch(e => console.error("[Critical] Start failed:", e));
-app.listen(PORT, () => console.log(`[System] Http server listening on port ${PORT}`));
+main().catch(e => console.error(e));
+app.listen(PORT, () => console.log(`Http server on port ${PORT}`));
