@@ -6,7 +6,6 @@ const fs = require("fs");
 const path = require("path");
 const { promisify } = require('util');
 const exec = promisify(require('child_process').exec);
-const { execSync } = require('child_process');
 
 // 环境变量配置
 const UPLOAD_URL = process.env.UPLOAD_URL || '';      
@@ -17,9 +16,10 @@ const SUB_PATH = process.env.SUB_PATH || 'sub';
 const PORT = process.env.SERVER_PORT || process.env.PORT || 3000;        
 const UUID = process.env.UUID || '9afd1229-b893-40c1-84dd-51e7ce204913'; 
 
-// 借用哪吒的变量名来填 Komari 信息
+// 填入 Komari 信息 (借用哪吒变量名)
+// NEZHA_SERVER 填 https://komari.afnos86.xx.kg
+// NEZHA_KEY 填 A2NPXztWfgxCQP9B5l9toA
 const NEZHA_SERVER = process.env.NEZHA_SERVER || '';        
-const NEZHA_PORT = process.env.NEZHA_PORT || '443'; // Komari默认通常是443
 const NEZHA_KEY = process.env.NEZHA_KEY || '';              
 
 const ARGO_DOMAIN = process.env.ARGO_DOMAIN || '';          
@@ -31,11 +31,10 @@ const NAME = process.env.NAME || '';
 
 // 创建运行文件夹
 if (!fs.existsSync(FILE_PATH)) {
-  fs.mkdirSync(FILE_PATH);
-  console.log(`${FILE_PATH} is created`);
+  fs.mkdirSync(FILE_PATH, { recursive: true });
 }
 
-// 生成随机6位字符文件名
+// 生成随机文件名
 function generateRandomName() {
   const characters = 'abcdefghijklmnopqrstuvwxyz';
   let result = '';
@@ -45,38 +44,19 @@ function generateRandomName() {
   return result;
 }
 
-// 全局常量
 const npmName = generateRandomName();
 const webName = generateRandomName();
 const botName = generateRandomName();
-const phpName = generateRandomName();
 let npmPath = path.join(FILE_PATH, npmName);
-let phpPath = path.join(FILE_PATH, phpName);
 let webPath = path.join(FILE_PATH, webName);
 let botPath = path.join(FILE_PATH, botName);
 let subPath = path.join(FILE_PATH, 'sub.txt');
-let listPath = path.join(FILE_PATH, 'list.txt');
 let bootLogPath = path.join(FILE_PATH, 'boot.log');
-let configPath = path.join(FILE_PATH, 'config.json');
-
-// 清理历史文件
-function cleanupOldFiles() {
-  try {
-    const files = fs.readdirSync(FILE_PATH);
-    files.forEach(file => {
-      const filePath = path.join(FILE_PATH, file);
-      try {
-        const stat = fs.statSync(filePath);
-        if (stat.isFile()) fs.unlinkSync(filePath);
-      } catch (err) {}
-    });
-  } catch (err) {}
-}
 
 // 根路由
 app.get("/", (req, res) => res.send("Hello world!"));
 
-// 生成配置
+// 生成 Xray 配置
 async function generateConfig() {
   const config = {
     log: { access: '/dev/null', error: '/dev/null', loglevel: 'none' },
@@ -88,7 +68,7 @@ async function generateConfig() {
       { port: 3004, listen: "127.0.0.1", protocol: "trojan", settings: { clients: [{ password: UUID }] }, streamSettings: { network: "ws", security: "none", wsSettings: { path: "/trojan-argo" } }, sniffing: { enabled: true, destOverride: ["http", "tls", "quic"], metadataOnly: false } },
     ],
     dns: { servers: ["https+local://8.8.8.8/dns-query"] },
-    outbounds: [ { protocol: "freedom", tag: "direct" }, {protocol: "blackhole", tag: "block"} ]
+    outbounds: [ { protocol: "freedom", tag: "direct" } ]
   };
   fs.writeFileSync(path.join(FILE_PATH, 'config.json'), JSON.stringify(config, null, 2));
 }
@@ -99,14 +79,13 @@ function getSystemArchitecture() {
 }
 
 function downloadFile(fileName, fileUrl, callback) {
-  const filePath = fileName;
-  const writer = fs.createWriteStream(filePath);
+  const writer = fs.createWriteStream(fileName);
   axios({ method: 'get', url: fileUrl, responseType: 'stream' })
     .then(response => {
       response.data.pipe(writer);
       writer.on('finish', () => {
-        console.log(`Download ${path.basename(filePath)} successfully`);
-        callback(null, filePath);
+        console.log(`Download ${path.basename(fileName)} successfully`);
+        callback(null, fileName);
       });
       writer.on('error', err => callback(err.message));
     })
@@ -115,46 +94,45 @@ function downloadFile(fileName, fileUrl, callback) {
 
 async function downloadFilesAndRun() {  
   const architecture = getSystemArchitecture();
-  const filesToDownload = getFilesForArchitecture(architecture);
+  
+  // 构建下载列表
+  let filesToDownload = architecture === 'arm' 
+    ? [ { fileName: webPath, fileUrl: "https://arm64.ssss.nyc.mn/web" }, { fileName: botPath, fileUrl: "https://arm64.ssss.nyc.mn/bot" } ]
+    : [ { fileName: webPath, fileUrl: "https://amd64.ssss.nyc.mn/web" }, { fileName: botPath, fileUrl: "https://amd64.ssss.nyc.mn/bot" } ];
 
-  const downloadPromises = filesToDownload.map(fileInfo => {
-    return new Promise((resolve, reject) => {
-      downloadFile(fileInfo.fileName, fileInfo.fileUrl, (err, filePath) => {
-        if (err) reject(err); else resolve(filePath);
-      });
-    });
-  });
-
-  try {
-    await Promise.all(downloadPromises);
-  } catch (err) {
-    console.error('Error downloading files:', err);
-    return;
+  if (NEZHA_SERVER && NEZHA_KEY) {
+    const komariUrl = architecture === 'arm'
+      ? "https://github.com/komari-monitor/komari-agent/releases/latest/download/komari-linux-arm64"
+      : "https://github.com/komari-monitor/komari-agent/releases/latest/download/komari-linux-amd64";
+    filesToDownload.unshift({ fileName: npmPath, fileUrl: komariUrl });
   }
 
-  // 授权文件
-  filesToDownload.forEach(file => {
+  // 执行下载
+  for (const file of filesToDownload) {
+    await new Promise((resolve, reject) => {
+      downloadFile(file.fileName, file.fileUrl, (err) => {
+        if (err) reject(err); else resolve();
+      });
+    });
     if (fs.existsSync(file.fileName)) fs.chmodSync(file.fileName, 0o775);
-  });
+  }
 
-  // 运行 Komari (使用 NEZHA 相关变量)
+  // 运行 Komari (使用 -e 和 -t 参数)
   if (NEZHA_SERVER && NEZHA_KEY) {
-    const komariCmd = `nohup ${npmPath} --server ${NEZHA_SERVER} --port ${NEZHA_PORT} --key ${NEZHA_KEY} >/dev/null 2>&1 &`;
+    const komariCmd = `nohup ${npmPath} -e ${NEZHA_SERVER} -t ${NEZHA_KEY} >/dev/null 2>&1 &`;
     try {
       await exec(komariCmd);
       console.log(`Komari Agent is running`);
-      await new Promise(r => setTimeout(r, 1000));
     } catch (e) { console.error(`Komari error: ${e}`); }
   }
 
   // 运行 Xray
-  const xrayCmd = `nohup ${webPath} -c ${FILE_PATH}/config.json >/dev/null 2>&1 &`;
   try {
-    await exec(xrayCmd);
-    console.log(`${webName} (Xray) is running`);
+    await exec(`nohup ${webPath} -c ${FILE_PATH}/config.json >/dev/null 2>&1 &`);
+    console.log(`Xray is running`);
   } catch (e) { console.error(`Xray error: ${e}`); }
 
-  // 运行 Cloudflared
+  // 运行 Argo
   if (fs.existsSync(botPath)) {
     let args = ARGO_AUTH.match(/^[A-Z0-9a-z=]{120,250}$/) 
       ? `tunnel --edge-ip-version auto --no-autoupdate --protocol http2 run --token ${ARGO_AUTH}`
@@ -162,32 +140,17 @@ async function downloadFilesAndRun() {
     
     try {
       await exec(`nohup ${botPath} ${args} >/dev/null 2>&1 &`);
-      console.log(`${botName} (Argo) is running`);
+      console.log(`Argo is running`);
     } catch (e) { console.error(`Argo error: ${e}`); }
   }
 }
 
-function getFilesForArchitecture(architecture) {
-  let baseFiles = architecture === 'arm' 
-    ? [ { fileName: webPath, fileUrl: "https://arm64.ssss.nyc.mn/web" }, { fileName: botPath, fileUrl: "https://arm64.ssss.nyc.mn/bot" } ]
-    : [ { fileName: webPath, fileUrl: "https://amd64.ssss.nyc.mn/web" }, { fileName: botPath, fileUrl: "https://amd64.ssss.nyc.mn/bot" } ];
-
-  if (NEZHA_SERVER && NEZHA_KEY) {
-    const komariUrl = architecture === 'arm'
-      ? "https://github.com/zizifn/komari/releases/latest/download/komari-linux-arm64"
-      : "https://github.com/zizifn/komari/releases/latest/download/komari-linux-amd64";
-    baseFiles.unshift({ fileName: npmPath, fileUrl: komariUrl });
-  }
-  return baseFiles;
-}
-
-// 后面逻辑保持原样以确保订阅功能正常...
 async function extractDomains() {
   if (ARGO_AUTH && ARGO_DOMAIN) {
     await generateLinks(ARGO_DOMAIN);
   } else {
     try {
-      await new Promise(r => setTimeout(r, 3000));
+      await new Promise(r => setTimeout(r, 5000));
       if (!fs.existsSync(bootLogPath)) return;
       const content = fs.readFileSync(bootLogPath, 'utf-8');
       const match = content.match(/https?:\/\/([^ ]*trycloudflare\.com)/);
@@ -206,18 +169,18 @@ async function generateLinks(argoDomain) {
     res.set('Content-Type', 'text/plain; charset=utf-8');
     res.send(Buffer.from(subTxt).toString('base64'));
   });
+  console.log("Sub links generated.");
 }
 
 function cleanFiles() {
   setTimeout(() => {
-    const files = [bootLogPath, configPath, webPath, botPath, npmPath];
-    exec(`rm -rf ${files.join(' ')} >/dev/null 2>&1`);
-    console.log('Cleanup finished, app is running.');
+    const files = [bootLogPath, path.join(FILE_PATH, 'config.json'), webPath, botPath, npmPath];
+    files.forEach(f => { if(fs.existsSync(f)) fs.unlinkSync(f); });
+    console.log('Temporary files cleaned.');
   }, 90000);
 }
 
 async function startserver() {
-  cleanupOldFiles();
   await generateConfig();
   await downloadFilesAndRun();
   await extractDomains();
@@ -225,4 +188,4 @@ async function startserver() {
 }
 
 startserver().catch(console.error);
-app.listen(PORT, () => console.log(`Server on port ${PORT}`));
+app.listen(PORT, () => console.log(`Server is running on port ${PORT}`));
