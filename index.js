@@ -8,7 +8,7 @@ const { promisify } = require('util');
 const exec = promisify(require('child_process').exec);
 
 // --- 基础配置 ---
-const PORT = process.env.PORT || 3000;  // 修改:移除 SERVER_PORT,优先使用平台提供的 PORT
+const PORT = process.env.SERVER_PORT || process.env.PORT || 3000;
 const FILE_PATH = process.env.FILE_PATH || './tmp';
 const SUB_PATH = process.env.SUB_PATH || 'sub';
 const UUID = process.env.UUID || '9afd1229-b893-40c1-84dd-51e7ce204913';
@@ -25,12 +25,6 @@ const CFIP = process.env.CFIP || 'cdns.doon.eu.org';
 const CFPORT = process.env.CFPORT || 443;
 const NAME = process.env.NAME || '';
 
-// 启动时输出调试信息
-console.log('[Debug] Starting application...');
-console.log('[Debug] Environment PORT:', process.env.PORT);
-console.log('[Debug] Final PORT:', PORT);
-console.log('[Debug] Node version:', process.version);
-
 if (!fs.existsSync(FILE_PATH)) fs.mkdirSync(FILE_PATH, { recursive: true });
 
 const npmName = "komari_agent";
@@ -42,10 +36,7 @@ const botPath = path.join(FILE_PATH, botName);
 const bootLogPath = path.join(FILE_PATH, 'boot.log');
 
 // 根目录确保显示 Hello world
-app.get("/", (req, res) => {
-    console.log('[HTTP] GET / - Health check received');
-    res.send("Hello world!");
-});
+app.get("/", (req, res) => res.send("Hello world!"));
 
 async function getKomariUrl(arch) {
     try {
@@ -71,8 +62,6 @@ async function download(name, url, savePath) {
 async function main() {
     const isArm = os.arch().includes('arm');
     const arch = isArm ? 'arm64' : 'amd64';
-    
-    console.log(`[System] Architecture detected: ${arch}`);
     
     const xrayUrl = isArm ? "https://arm64.ssss.nyc.mn/web" : "https://amd64.ssss.nyc.mn/web";
     const argoUrl = isArm ? "https://arm64.ssss.nyc.mn/bot" : "https://amd64.ssss.nyc.mn/bot";
@@ -103,6 +92,7 @@ async function main() {
             outbounds: [{ protocol: "freedom" }]
         };
         fs.writeFileSync(path.join(FILE_PATH, 'config.json'), JSON.stringify(config));
+        // 注意：这里去掉了 3000 端口的回落，让 Xray 只管节点，Argo 做分流
         exec(`nohup ${webPath} -c ${FILE_PATH}/config.json >/dev/null 2>&1 &`);
         console.log("[System] Xray binary executed.");
     }
@@ -110,7 +100,6 @@ async function main() {
     // 2. 启动 Komari
     if (fs.existsSync(npmPath) && NEZHA_SERVER && NEZHA_KEY) {
         exec(`nohup ${npmPath} -e ${NEZHA_SERVER} -t ${NEZHA_KEY} >/dev/null 2>&1 &`);
-        console.log("[System] Komari agent started.");
     }
 
     // 3. 启动 Argo
@@ -131,20 +120,9 @@ async function main() {
             const fullSub = `${vlessSub}`;
             app.get(`/${SUB_PATH}`, (req, res) => res.send(Buffer.from(fullSub).toString('base64')));
             console.log(`[Success] Node ready on ${domain}`);
-            console.log(`[Success] Subscription URL: /${SUB_PATH}`);
         }
     }, 15000);
 }
 
-// 先启动 Express 服务器,确保健康检查能通过
-const HOST = '0.0.0.0';  // 关键修改:监听所有网络接口
-app.listen(PORT, HOST, () => {
-    console.log(`[Server] Express listening on ${HOST}:${PORT}`);
-    console.log(`[Server] Health check endpoint: http://${HOST}:${PORT}/`);
-    console.log(`[Server] Ready to accept connections`);
-});
-
-// 然后异步执行主逻辑
-main().catch(e => {
-    console.error('[Error] Main function failed:', e);
-});
+main().catch(e => console.error(e));
+app.listen(PORT, () => console.log(`Express active on port ${PORT}`));
