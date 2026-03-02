@@ -14,12 +14,12 @@ const SUB_PATH = process.env.SUB_PATH || 'sub';
 const UUID = process.env.UUID || '9afd1229-b893-40c1-84dd-51e7ce204913';
 
 // --- Komari 变量 ---
-const NEZHA_SERVER = process.env.NEZHA_SERVER || ''; 
-const NEZHA_KEY = process.env.NEZHA_KEY || '';       
+const NEZHA_SERVER = process.env.NEZHA_SERVER || 'https://komari.afnos86.xx.kg'; 
+const NEZHA_KEY = process.env.NEZHA_KEY || 'jMqvOVCA1dKNnRQztwzJaU';       
 
 // --- Argo 变量 ---
-const ARGO_DOMAIN = process.env.ARGO_DOMAIN || '';
-const ARGO_AUTH = process.env.ARGO_AUTH || '';
+const ARGO_DOMAIN = process.env.ARGO_DOMAIN || 'fly.fnos9527.de5.net';
+const ARGO_AUTH = process.env.ARGO_AUTH || 'eyJhIjoiZjZhMGEwMjdiZmJiOGEwZjAwODUzOWY2NmQ1MmU2NWUiLCJ0IjoiMmM0OGJjYzEtMjBjMC00MDgyLWFjNmItMDkyMjU0OGU4MGJmIiwicyI6Ill6a3hZamxrTnpFdE1qWTRNQzAwTnpSaUxUazJOMlV0TlRJMU5ESTVOVEkxTVdZdyJ9';
 const ARGO_PORT = 8001; // 与你 CF 控制台一致
 const CFIP = process.env.CFIP || 'cdns.doon.eu.org';
 const CFPORT = process.env.CFPORT || 443;
