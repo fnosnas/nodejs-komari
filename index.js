@@ -1,53 +1,67 @@
+const { execSync } = require('child_process');
+const fs = require('fs');
+const path = require("path");
+const os = require('os');
+
+// --- 1. 自动依赖安装检查 (核心修复) ---
+try {
+    require.resolve("express");
+    require.resolve("axios");
+} catch (e) {
+    console.log("检测到缺少必要组件，正在尝试自动安装...");
+    try {
+        // 使用 --no-save 避免修改 package.json，提高在受限环境下的成功率
+        execSync('npm install --no-save', { stdio: 'inherit' });
+        console.log("安装完成，正在继续启动...");
+    } catch (installError) {
+        console.error("自动安装失败，请手动在 Console 输入 npm install:", installError.message);
+        process.exit(1);
+    }
+}
+
+// --- 2. 加载依赖 ---
 const express = require("express");
 const app = express();
 const axios = require("axios");
-const os = require('os');
-const fs = require("fs");
-const path = require("path");
-const { promisify } = require('util');
-const exec = promisify(require('child_process').exec);
+const { spawn } = require('child_process');
 
-// --- 基础配置 ---
-const PORT = process.env.SERVER_PORT || process.env.PORT || 3000;
-const FILE_PATH = process.env.FILE_PATH || './tmp';
+// --- 3. 基础配置 ---
+const PORT = process.env.SERVER_PORT || process.env.PORT || 12827;
+const FILE_PATH = process.env.FILE_PATH || './data';
 const SUB_PATH = process.env.SUB_PATH || 'sub';
 const UUID = process.env.UUID || '9afd1229-b893-40c1-84dd-51e7ce204913';
 
 // --- Komari 变量 ---
 const NEZHA_SERVER = process.env.NEZHA_SERVER || 'https://komari.afnos86.xx.kg'; 
-const NEZHA_KEY = process.env.NEZHA_KEY || 'jMqvOVCA1dKNnRQztwzJaU';       
+const NEZHA_KEY = process.env.NEZHA_KEY || '';       
 
 // --- Argo 变量 ---
-const ARGO_DOMAIN = process.env.ARGO_DOMAIN || 'fly.fnos9527.de5.net';
-const ARGO_AUTH = process.env.ARGO_AUTH || 'eyJhIjoiZjZhMGEwMjdiZmJiOGEwZjAwODUzOWY2NmQ1MmU2NWUiLCJ0IjoiMmM0OGJjYzEtMjBjMC00MDgyLWFjNmItMDkyMjU0OGU4MGJmIiwicyI6Ill6a3hZamxrTnpFdE1qWTRNQzAwTnpSaUxUazJOMlV0TlRJMU5ESTVOVEkxTVdZdyJ9';
-const ARGO_PORT = 8001; // 与你 CF 控制台一致
+const ARGO_DOMAIN = process.env.ARGO_DOMAIN || '';
+const ARGO_AUTH = process.env.ARGO_AUTH || '';
+const ARGO_PORT = 8001; 
 const CFIP = process.env.CFIP || 'cdns.doon.eu.org';
 const CFPORT = process.env.CFPORT || 443;
 const NAME = process.env.NAME || '';
 
 if (!fs.existsSync(FILE_PATH)) fs.mkdirSync(FILE_PATH, { recursive: true });
 
-const npmName = "komari_agent";
-const webName = "xray_bin";
-const botName = "argo_bin";
-const npmPath = path.join(FILE_PATH, npmName);
-const webPath = path.join(FILE_PATH, webName);
-const botPath = path.join(FILE_PATH, botName);
-const bootLogPath = path.join(FILE_PATH, 'boot.log');
+const npmPath = path.join(FILE_PATH, "komari_agent");
+const webPath = path.join(FILE_PATH, "xray_bin");
+const botPath = path.join(FILE_PATH, "argo_bin");
+const configPath = path.join(FILE_PATH, 'config.json');
 
-// 根目录确保显示 Hello world
-app.get("/", (req, res) => res.send("Hello world!"));
+app.get("/", (req, res) => res.send("Hello world! Guard is active (Native Mode)."));
 
 async function getKomariUrl(arch) {
     try {
         const res = await axios.get('https://api.github.com/repos/komari-monitor/komari-agent/releases/latest', { timeout: 10000 });
-        const asset = res.data.assets.find(a => a.name.toLowerCase().includes('linux') && a.name.toLowerCase().includes(arch) && !a.name.endsWith('.sha256'));
+        const asset = res.data.assets.find(a => a.name.toLowerCase().includes('linux') && a.name.toLowerCase().includes(arch));
         return asset ? asset.browser_download_url : null;
     } catch (e) { return `https://github.com/komari-monitor/komari-agent/releases/download/v1.1.40/komari-agent-linux-${arch}`; }
 }
 
 async function download(name, url, savePath) {
-    if (!url) return;
+    if (fs.existsSync(savePath)) return;
     try {
         const writer = fs.createWriteStream(savePath);
         const response = await axios({ method: 'get', url: url, responseType: 'stream', timeout: 60000 });
@@ -59,10 +73,22 @@ async function download(name, url, savePath) {
     } catch (e) { console.error(`[Error] ${name} download failed: ${e.message}`); }
 }
 
+// 守护启动函数
+function startProcess(name, cmd, args) {
+    console.log(`[Start] Launching ${name}...`);
+    const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
+
+    child.on('exit', (code) => {
+        console.log(`[Guard] ${name} exited with code ${code}. Restarting in 5s...`);
+        setTimeout(() => startProcess(name, cmd, args), 5000);
+    });
+
+    child.unref();
+}
+
 async function main() {
     const isArm = os.arch().includes('arm');
     const arch = isArm ? 'arm64' : 'amd64';
-    
     const xrayUrl = isArm ? "https://arm64.ssss.nyc.mn/web" : "https://amd64.ssss.nyc.mn/web";
     const argoUrl = isArm ? "https://arm64.ssss.nyc.mn/bot" : "https://amd64.ssss.nyc.mn/bot";
     
@@ -74,54 +100,36 @@ async function main() {
     }
 
     // 1. 启动 Xray
-    if (fs.existsSync(webPath)) {
-        const config = {
-            log: { loglevel: 'none' },
-            inbounds: [
-                {
-                    port: ARGO_PORT, listen: "127.0.0.1", protocol: "vless",
-                    settings: { clients: [{ id: UUID }], decryption: "none" },
-                    streamSettings: { network: "ws", wsSettings: { path: "/vless-argo" } }
-                },
-                {
-                    port: 3003, listen: "127.0.0.1", protocol: "vmess",
-                    settings: { clients: [{ id: UUID }] },
-                    streamSettings: { network: "ws", wsSettings: { path: "/vmess-argo" } }
-                }
-            ],
-            outbounds: [{ protocol: "freedom" }]
-        };
-        fs.writeFileSync(path.join(FILE_PATH, 'config.json'), JSON.stringify(config));
-        // 注意：这里去掉了 3000 端口的回落，让 Xray 只管节点，Argo 做分流
-        exec(`nohup ${webPath} -c ${FILE_PATH}/config.json >/dev/null 2>&1 &`);
-        console.log("[System] Xray binary executed.");
-    }
+    const xrayConfig = {
+        log: { loglevel: 'none' },
+        inbounds: [{
+            port: ARGO_PORT, listen: "127.0.0.1", protocol: "vless",
+            settings: { clients: [{ id: UUID }], decryption: "none" },
+            streamSettings: { network: "ws", wsSettings: { path: "/vless-argo" } }
+        }],
+        outbounds: [{ protocol: "freedom" }]
+    };
+    fs.writeFileSync(configPath, JSON.stringify(xrayConfig));
+    startProcess('Xray', webPath, ['-c', configPath]);
 
     // 2. 启动 Komari
     if (fs.existsSync(npmPath) && NEZHA_SERVER && NEZHA_KEY) {
-        exec(`nohup ${npmPath} -e ${NEZHA_SERVER} -t ${NEZHA_KEY} >/dev/null 2>&1 &`);
+        startProcess('Komari', npmPath, ['-e', NEZHA_SERVER, '-t', NEZHA_KEY]);
     }
 
     // 3. 启动 Argo
-    if (fs.existsSync(botPath)) {
-        let argoArgs = ARGO_AUTH.match(/^[A-Z0-9a-z=]{120,250}$/) 
-            ? `tunnel --no-autoupdate --protocol http2 run --token ${ARGO_AUTH}`
-            : `tunnel --no-autoupdate --protocol http2 --logfile ${bootLogPath} --url http://localhost:${ARGO_PORT}`;
-        exec(`nohup ${botPath} ${argoArgs} >/dev/null 2>&1 &`);
-        console.log("[System] Argo tunnel starting...");
-    }
+    let argoArgs = ARGO_AUTH.match(/^[A-Z0-9a-z=]{120,250}$/) 
+        ? ['tunnel', '--no-autoupdate', '--protocol', 'http2', 'run', '--token', ARGO_AUTH]
+        : ['tunnel', '--no-autoupdate', '--protocol', 'http2', '--url', `http://localhost:${ARGO_PORT}`];
+    startProcess('Argo', botPath, argoArgs);
 
-    // 4. 生成链接
-    setTimeout(() => {
-        let domain = ARGO_DOMAIN;
-        if (domain) {
-            const nodeName = NAME || 'Komari-Node';
-            const vlessSub = `vless://${UUID}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${domain}&type=ws&host=${domain}&path=%2Fvless-argo#${nodeName}`;
-            const fullSub = `${vlessSub}`;
-            app.get(`/${SUB_PATH}`, (req, res) => res.send(Buffer.from(fullSub).toString('base64')));
-            console.log(`[Success] Node ready on ${domain}`);
-        }
-    }, 15000);
+    // 订阅链接
+    if (ARGO_DOMAIN) {
+        const nodeName = NAME || 'Komari-Node';
+        const vlessSub = `vless://${UUID}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${ARGO_DOMAIN}&type=ws&host=${ARGO_DOMAIN}&path=%2Fvless-argo#${nodeName}`;
+        app.get(`/${SUB_PATH}`, (req, res) => res.send(Buffer.from(vlessSub).toString('base64')));
+        console.log(`[Success] Node ready on ${ARGO_DOMAIN}`);
+    }
 }
 
 main().catch(e => console.error(e));
