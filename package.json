@@ -1,22 +1,27 @@
 {
-  "name": "nodejs-argo-komari",
-  "version": "1.0.0",
-  "description": "Nodejs project with Argo and Komari agent",
+  "name": "nodejs-argo-komari-stable",
+  "version": "1.1.0",
+  "description": "Nodejs project with Auto-Restart Guard for Argo and Komari",
   "main": "index.js",
   "author": "eooce",
-  "repository": "",
   "license": "MIT",
   "private": false,
   "scripts": {
-    "dev": "node index.js",
     "start": "node index.js",
-    "build": "echo build skip"
+    "dev": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
     "axios": "^1.6.0",
     "express": "^4.18.2"
   },
   "engines": {
-    "node": ">=14"
-  }
+    "node": ">=16"
+  },
+  "keywords": [
+    "argo",
+    "xray",
+    "komari",
+    "guard"
+  ]
 }
