@@ -20,7 +20,7 @@ const NEZHA_KEY = process.env.NEZHA_KEY || 'UWOenWD7pEvhNjBlujfyaW';
 // --- Argo 变量 ---
 const ARGO_DOMAIN = process.env.ARGO_DOMAIN || 'choreo.fnos9527.dpdns.org';
 const ARGO_AUTH = process.env.ARGO_AUTH || 'eyJhIjoiZjZhMGEwMjdiZmJiOGEwZjAwODUzOWY2NmQ1MmU2NWUiLCJ0IjoiZjM5YzJlMTctYWUzMC00OGZmLTgxMTUtM2Y3MTNlMDI0YzI0IiwicyI6Ik16VXdPV000TlRrdE56VTFZaTAwTmpNMUxXSmtNV0l0WW1Fek9XUmhZMkppTXpGaSJ9';
-const ARGO_PORT = 8080; // 与你 CF 控制台一致
+const ARGO_PORT = 8001; // 与你 CF 控制台一致
 const CFIP = process.env.CFIP || 'cdns.doon.eu.org';
 const CFPORT = process.env.CFPORT || 443;
 const NAME = process.env.NAME || '';
