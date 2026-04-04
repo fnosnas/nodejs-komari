@@ -1,12 +1,8 @@
-FROM node:18-bookworm-slim
+FROM node:18
 
 WORKDIR /app
 COPY . .
 
-RUN apt-get update && \
-    apt-get install -y ca-certificates curl && \
-    npm install --production && \
-    rm -rf /var/lib/apt/lists/*
+RUN npm install --production
 
-EXPOSE 3000
-CMD ["node", "
+CMD ["node", "index.js"]
