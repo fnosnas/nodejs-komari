@@ -1,6 +1,7 @@
 const os = require("os");
 const fs = require("fs");
 const path = require("path");
+const net = require("net");
 const axios = require("axios");
 const express = require("express");
 const { spawn } = require("child_process");
@@ -43,7 +44,7 @@ function info(msg) {
 }
 
 /* ================= 下载工具 ================= */
-async function download(url, savePath) {
+async function download(name, url, savePath) {
   if (!url) return;
   if (fs.existsSync(savePath)) return;
 
@@ -82,10 +83,66 @@ function getKomariUrl() {
   return null;
 }
 
+/* ================= TCP 检查（保留 /debug 用） ================= */
+function checkPort(host, port) {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host, port });
+    let done = false;
+
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
+      socket.destroy();
+      resolve(ok);
+    };
+
+    socket.setTimeout(2500);
+    socket.on("connect", () => finish(true));
+    socket.on("timeout", () => finish(false));
+    socket.on("error", () => finish(false));
+  });
+}
+
 /* ================= 进程对象 ================= */
 let xrayProc = null;
 let argoProc = null;
 let komariProc = null;
+
+/* 防止 error/exit 同时触发导致重复重启 */
+let xrayRestartTimer = null;
+let argoRestartTimer = null;
+let komariRestartTimer = null;
+
+function scheduleRestart(type, fn, withLog = false, detail = "") {
+  if (type === "xray") {
+    if (xrayRestartTimer) return;
+    if (withLog) info(detail || `[Xray] restart in 30s`);
+    xrayRestartTimer = setTimeout(() => {
+      xrayRestartTimer = null;
+      fn();
+    }, RESTART_DELAY);
+    return;
+  }
+
+  if (type === "argo") {
+    if (argoRestartTimer) return;
+    if (withLog) info(detail || `[Argo] restart in 30s`);
+    argoRestartTimer = setTimeout(() => {
+      argoRestartTimer = null;
+      fn();
+    }, RESTART_DELAY);
+    return;
+  }
+
+  if (type === "komari") {
+    if (komariRestartTimer) return;
+    if (withLog) info(detail || `[Komari] restart in 30s`);
+    komariRestartTimer = setTimeout(() => {
+      komariRestartTimer = null;
+      fn();
+    }, RESTART_DELAY);
+  }
+}
 
 /* ================= Xray（静默守护） ================= */
 function startXray() {
@@ -121,7 +178,7 @@ function startXray() {
     outbounds: [{ protocol: "freedom" }]
   };
 
-  fs.writeFileSync(XRAY_CONF, JSON.stringify(config));
+  fs.writeFileSync(XRAY_CONF, JSON.stringify(config, null, 2));
 
   xrayProc = spawn(XRAY, ["-c", XRAY_CONF], {
     stdio: ["ignore", "ignore", "ignore"]
@@ -129,12 +186,12 @@ function startXray() {
 
   xrayProc.on("exit", () => {
     xrayProc = null;
-    setTimeout(startXray, RESTART_DELAY);
+    scheduleRestart("xray", startXray, false);
   });
 
   xrayProc.on("error", () => {
     xrayProc = null;
-    setTimeout(startXray, RESTART_DELAY);
+    scheduleRestart("xray", startXray, false);
   });
 }
 
@@ -143,11 +200,7 @@ function isTokenLike(str) {
   return /^[A-Za-z0-9=._-]{100,400}$/.test(str || "");
 }
 
-/* ================= Argo（只有它挂了才打印） ================= */
-/*
-  这里恢复成“调试版里已经验证能启动”的 TUNNEL_TOKEN 环境变量方式。
-  这样更接近你之前实际跑起来的行为，同时仍然不经过 shell。
-*/
+/* ================= Argo（只有它挂了才提示） ================= */
 function startArgo() {
   if (!fs.existsSync(ARGO)) return;
   if (argoProc && !argoProc.killed) return;
@@ -187,14 +240,22 @@ function startArgo() {
 
   argoProc.on("exit", (code, signal) => {
     argoProc = null;
-    info(`[Argo] exited code=${code} signal=${signal}, restart in 30s`);
-    setTimeout(startArgo, RESTART_DELAY);
+    scheduleRestart(
+      "argo",
+      startArgo,
+      true,
+      `[Argo] exited code=${code} signal=${signal}, restart in 30s`
+    );
   });
 
   argoProc.on("error", (err) => {
     argoProc = null;
-    info(`[Argo] error: ${err.message}, restart in 30s`);
-    setTimeout(startArgo, RESTART_DELAY);
+    scheduleRestart(
+      "argo",
+      startArgo,
+      true,
+      `[Argo] error: ${err.message}, restart in 30s`
+    );
   });
 }
 
@@ -219,12 +280,12 @@ function startKomari() {
 
   komariProc.on("exit", () => {
     komariProc = null;
-    setTimeout(startKomari, RESTART_DELAY);
+    scheduleRestart("komari", startKomari, false);
   });
 
   komariProc.on("error", () => {
     komariProc = null;
-    setTimeout(startKomari, RESTART_DELAY);
+    scheduleRestart("komari", startKomari, false);
   });
 }
 
@@ -240,17 +301,17 @@ async function main() {
     ? "https://arm64.ssss.nyc.mn/bot"
     : "https://amd64.ssss.nyc.mn/bot";
 
-  await download(xrayUrl, XRAY);
-  await download(argoUrl, ARGO);
+  await download("Xray", xrayUrl, XRAY);
+  await download("Argo", argoUrl, ARGO);
 
   if (NEZHA_SERVER && NEZHA_KEY) {
     const komariUrl = getKomariUrl();
-    await download(komariUrl, KOMARI);
+    await download("Komari", komariUrl, KOMARI);
   }
 
   startXray();
 
-  /* 给 Xray 一点启动时间 */
+  /* 给 Xray 一点启动时间，再启动 Argo */
   setTimeout(() => {
     startArgo();
   }, 1500);
@@ -263,6 +324,26 @@ async function main() {
 /* ================= HTTP ================= */
 app.get("/", (_, res) => {
   res.send("Hello world!");
+});
+
+app.get("/debug", async (_, res) => {
+  const tcpOk = await checkPort("127.0.0.1", ARGO_PORT);
+
+  res.json({
+    ok: true,
+    tcp8001: tcpOk,
+    pids: {
+      xray: xrayProc ? xrayProc.pid : null,
+      argo: argoProc ? argoProc.pid : null,
+      komari: komariProc ? komariProc.pid : null
+    },
+    files: {
+      xray: fs.existsSync(XRAY),
+      argo: fs.existsSync(ARGO),
+      komari: fs.existsSync(KOMARI),
+      config: fs.existsSync(XRAY_CONF)
+    }
+  });
 });
 
 /*
