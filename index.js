@@ -7,7 +7,7 @@ const { spawn } = require("child_process");
 
 const app = express();
 
-/* ========== 基础配置 ========== */
+/* ================= 基础配置 ================= */
 const PORT = process.env.PORT || 3000;
 const FILE_PATH = process.env.FILE_PATH || "./tmp";
 const SUB_PATH = process.env.SUB_PATH || "sub";
@@ -16,41 +16,43 @@ const UUID = process.env.UUID || "9afd1229-b893-40c1-84dd-51e7ce204913";
 const NEZHA_SERVER = process.env.NEZHA_SERVER || "";
 const NEZHA_KEY = process.env.NEZHA_KEY || "";
 
-const ARGO_DOMAIN = process.env.ARGO_DOMAIN || "";
 const ARGO_AUTH = process.env.ARGO_AUTH || "";
 const ARGO_PORT = 8001;
 
+const ARGO_DOMAIN = process.env.ARGO_DOMAIN || "";
 const CFIP = process.env.CFIP || "cdns.doon.eu.org";
 const CFPORT = process.env.CFPORT || 443;
 const NAME = process.env.NAME || "Komari-Node";
 
-/* ========== 路径 ========== */
+/* ================= 路径 ================= */
 if (!fs.existsSync(FILE_PATH)) fs.mkdirSync(FILE_PATH, { recursive: true });
 
 const XRAY = path.join(FILE_PATH, "xray");
 const ARGO = path.join(FILE_PATH, "argo");
 const KOMARI = path.join(FILE_PATH, "komari");
 
-/* ========== 下载工具 ========== */
+/* ================= 下载工具 ================= */
 async function download(url, savePath) {
   if (fs.existsSync(savePath)) return;
   console.log(`[Download] ${url}`);
   const res = await axios({ url, responseType: "stream", timeout: 60000 });
-  await new Promise((resolve) =>
-    res.data.pipe(fs.createWriteStream(savePath)).on("finish", resolve)
-  );
+  await new Promise((resolve, reject) => {
+    const w = fs.createWriteStream(savePath);
+    res.data.pipe(w);
+    w.on("finish", resolve);
+    w.on("error", reject);
+  });
   fs.chmodSync(savePath, 0o755);
 }
 
-/* ========== Komari 下载 ========== */
+/* ================= Komari URL ================= */
 function komariUrl() {
-  if (os.arch().includes("arm")) {
-    return "https://github.com/komari-monitor/komari-agent/releases/download/1.1.80/komari-agent-linux-arm64";
-  }
-  return "https://github.com/komari-monitor/komari-agent/releases/download/1.1.80/komari-agent-linux-amd64";
+  return os.arch().includes("arm")
+    ? "https://github.com/komari-monitor/komari-agent/releases/download/1.1.80/komari-agent-linux-arm64"
+    : "https://github.com/komari-monitor/komari-agent/releases/download/1.1.80/komari-agent-linux-amd64";
 }
 
-/* ========== Komari 守护启动（核心） ========== */
+/* ================= Komari 守护启动 ================= */
 function startKomari() {
   if (!NEZHA_SERVER || !NEZHA_KEY) {
     console.log("[Komari] env not set, skip");
@@ -70,7 +72,30 @@ function startKomari() {
   });
 }
 
-/* ========== 主逻辑 ========== */
+/* ================= Argo 启动（已修复 shell 错误） ================= */
+function startArgo() {
+  console.log("[Argo] starting...");
+
+  const env = { ...process.env };
+
+  // ✅ 关键修复：Token 走环境变量，避免 shell 解析
+  if (ARGO_AUTH) {
+    env.TUNNEL_TOKEN = ARGO_AUTH;
+  }
+
+  const args = ["tunnel", "--no-autoupdate", "run"];
+
+  const p = spawn(ARGO, args, {
+    stdio: ["ignore", "inherit", "inherit"],
+    env,
+  });
+
+  p.on("exit", (code, signal) => {
+    console.error(`[Argo] exited code=${code} signal=${signal}`);
+  });
+}
+
+/* ================= 主逻辑 ================= */
 async function main() {
   const isArm = os.arch().includes("arm");
 
@@ -105,15 +130,15 @@ async function main() {
     })
   );
 
-  spawn(XRAY, ["-c", `${FILE_PATH}/config.json`], { stdio: "ignore" });
-  spawn(ARGO, ARGO_AUTH
-    ? ["tunnel", "--no-autoupdate", "run", "--token", ARGO_AUTH]
-    : ["tunnel", "--no-autoupdate", "run"]
-  );
+  spawn(XRAY, ["-c", `${FILE_PATH}/config.json`], {
+    stdio: ["ignore", "ignore", "inherit"],
+  });
 
+  startArgo();
   startKomari();
 }
 
+/* ================= HTTP ================= */
 app.get("/", (_, res) => res.send("Hello world"));
 
 app.get(`/${SUB_PATH}`, (_, res) => {
@@ -122,4 +147,6 @@ app.get(`/${SUB_PATH}`, (_, res) => {
 });
 
 main();
-app.listen(PORT, () => console.log(`Server up on ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Server running on ${PORT}`);
+});
