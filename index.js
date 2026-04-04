@@ -11,20 +11,18 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const FILE_PATH = "./tmp";
 
-const UUID = process.env.UUID || "9afd1229-b893-40c1-84dd-51e7ce204913";
-
-/* ✅ 关键：统一的 Argo / Xray 端口 */
+/* ✅ 极其重要：统一 Argo / Xray 端口 */
 const ARGO_PORT = 8001;
+
+const UUID = process.env.UUID || "9afd1229-b893-40c1-84dd-51e7ce204913";
 
 const NEZHA_SERVER = process.env.NEZHA_SERVER || "";
 const NEZHA_KEY = process.env.NEZHA_KEY || "";
 
-const ARGO_AUTH = process.env.ARGO_AUTH || "";
-const ARGO_DOMAIN = process.env.ARGO_DOMAIN || "";
-
+/* ✅ 优选域名（保持你原来的设计） */
 const CFIP = "cdns.doon.eu.org";
 const CFPORT = 443;
-const NAME = "Node";
+const NAME = "wed";
 
 /* ================= 路径 ================= */
 if (!fs.existsSync(FILE_PATH)) fs.mkdirSync(FILE_PATH, { recursive: true });
@@ -37,14 +35,23 @@ const XRAY_CONF = path.join(FILE_PATH, "config.json");
 /* ================= 下载工具 ================= */
 async function download(url, file) {
   if (fs.existsSync(file)) return;
-  const res = await axios({ url, responseType: "stream", timeout: 60000 });
-  await new Promise(resolve =>
-    res.data.pipe(fs.createWriteStream(file)).on("finish", resolve)
-  );
+
+  const res = await axios({
+    url,
+    responseType: "stream",
+    timeout: 60000,
+  });
+
+  await new Promise(resolve => {
+    res.data
+      .pipe(fs.createWriteStream(file))
+      .on("finish", resolve);
+  });
+
   fs.chmodSync(file, 0o755);
 }
 
-/* ================= Xray（✅ 明确监听 ARGO_PORT） ================= */
+/* ================= Xray（真实监听 8001） ================= */
 function startXray() {
   const config = {
     log: { loglevel: "none" },
@@ -55,42 +62,45 @@ function startXray() {
         protocol: "vless",
         settings: {
           clients: [{ id: UUID }],
-          decryption: "none"
+          decryption: "none",
         },
         streamSettings: {
           network: "ws",
           security: "none",
           wsSettings: {
-            path: "/vless-argo"
-          }
-        }
-      }
+            path: "/vless-argo",
+          },
+        },
+      },
     ],
-    outbounds: [{ protocol: "freedom" }]
+    outbounds: [{ protocol: "freedom" }],
   };
 
   fs.writeFileSync(XRAY_CONF, JSON.stringify(config));
-  spawn(XRAY, ["-c", XRAY_CONF], { stdio: "ignore" });
+
+  spawn(XRAY, ["-c", XRAY_CONF], {
+    stdio: ["ignore", "ignore", "ignore"],
+  });
 }
 
-/* ================= Argo（✅ 明确转发到 ARGO_PORT） ================= */
+/* ================= Argo（✅ 回到原始 --url 模式） ================= */
 function startArgo() {
-  const env = { ...process.env };
-  env.TUNNEL_TOKEN = ARGO_AUTH;
-
   spawn(
     ARGO,
     [
       "tunnel",
       "--no-autoupdate",
+      "--protocol", "http2",
       "--loglevel", "error",
-      "run"
+      "--url", `http://127.0.0.1:${ARGO_PORT}`,
     ],
-    { env, stdio: "ignore" }
+    {
+      stdio: ["ignore", "ignore", "ignore"],
+    }
   );
 }
 
-/* ================= Komari（自动拉起） ================= */
+/* ================= Komari（自动拉起 + 低资源） ================= */
 function startKomari() {
   if (!NEZHA_SERVER || !NEZHA_KEY) return;
 
@@ -100,9 +110,11 @@ function startKomari() {
       "-e", NEZHA_SERVER,
       "-t", NEZHA_KEY,
       "--disable-auto-update",
-      "--disable-web-ssh"
+      "--disable-web-ssh",
     ],
-    { stdio: "ignore" }
+    {
+      stdio: ["ignore", "ignore", "ignore"],
+    }
   );
 }
 
@@ -116,12 +128,14 @@ async function main() {
       : "https://amd64.ssss.nyc.mn/web",
     XRAY
   );
+
   await download(
     isArm
       ? "https://arm64.ssss.nyc.mn/bot"
       : "https://amd64.ssss.nyc.mn/bot",
     ARGO
   );
+
   await download(
     isArm
       ? "https://github.com/komari-monitor/komari-agent/releases/download/1.1.80/komari-agent-linux-arm64"
@@ -134,16 +148,16 @@ async function main() {
   startKomari();
 }
 
-/* ================= HTTP & 订阅 ================= */
-app.get("/", (_, res) => res.send("OK"));
+/* ================= HTTP + 订阅 ================= */
+app.get("/", (_, res) => res.send("hello-world"));
 
 app.get("/sub", (_, res) => {
   const vless =
     `vless://${UUID}@${CFIP}:${CFPORT}` +
-    `?encryption=none&security=tls` +
-    `&sni=${ARGO_DOMAIN}` +
+    `?encryption=none` +
+    `&security=tls` +
     `&type=ws` +
-    `&host=${ARGO_DOMAIN}` +
+    `&host=${CFIP}` +
     `&path=%2Fvless-argo` +
     `#${NAME}`;
 
@@ -155,4 +169,3 @@ main();
 app.listen(PORT, () => {
   console.log("Service started");
 });
-``
