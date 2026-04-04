@@ -30,9 +30,10 @@ const XRAY = path.join(FILE_PATH, "xray");
 const ARGO = path.join(FILE_PATH, "argo");
 const KOMARI = path.join(FILE_PATH, "komari");
 
-/* ========= 下载 ========= */
+/* ========= 下载工具 ========= */
 async function download(url, file) {
   if (fs.existsSync(file)) return;
+  console.log(`[Download] ${url}`);
   const res = await axios({ url, responseType: "stream", timeout: 60000 });
   await new Promise(resolve =>
     res.data.pipe(fs.createWriteStream(file)).on("finish", resolve)
@@ -40,11 +41,11 @@ async function download(url, file) {
   fs.chmodSync(file, 0o755);
 }
 
-/* ========= Komari（低资源模式） ========= */
+/* ========= Komari（自动拉起 + 低资源 + 静默） ========= */
 function startKomari() {
   if (!NEZHA_SERVER || !NEZHA_KEY) return;
 
-  spawn(
+  const p = spawn(
     KOMARI,
     [
       "-e", NEZHA_SERVER,
@@ -54,23 +55,31 @@ function startKomari() {
     ],
     { stdio: ["ignore", "inherit", "inherit"] }
   );
+
+  p.on("exit", () => {
+    setTimeout(startKomari, 5000);
+  });
 }
 
-/* ========= Argo（最低开销模式） ========= */
+/* ========= Argo（完全静默 + 自动拉起） ========= */
 function startArgo() {
   const env = { ...process.env };
   if (ARGO_AUTH) env.TUNNEL_TOKEN = ARGO_AUTH;
 
-  spawn(
+  const p = spawn(
     ARGO,
     [
       "tunnel",
       "--no-autoupdate",
-      "--metrics", "127.0.0.1:0",
+      "--loglevel", "error",
       "run"
     ],
-    { stdio: ["ignore", "ignore", "inherit"], env }
+    { stdio: ["ignore", "ignore", "ignore"], env }
   );
+
+  p.on("exit", () => {
+    setTimeout(startArgo, 5000);
+  });
 }
 
 /* ========= 主逻辑 ========= */
@@ -92,13 +101,21 @@ async function main() {
     KOMARI
   );
 
-  spawn(XRAY, ["-test"], { stdio: "ignore" });
-
   startArgo();
   startKomari();
 }
 
+/* ========= HTTP ========= */
 app.get("/", (_, res) => res.send("OK"));
 
+app.get(`/${SUB_PATH}`, (_, res) => {
+  if (!ARGO_DOMAIN) return res.send("ARGO_DOMAIN not set");
+  const vless = `vless://${UUID}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${ARGO_DOMAIN}&type=ws&host=${ARGO_DOMAIN}&path=%2Fvless-argo#${NAME}`;
+  res.send(Buffer.from(vless).toString("base64"));
+});
+
+/* ========= 启动 ========= */
 main();
-app.listen(PORT, () => console.log(`Listening ${PORT}`));
+app.listen(PORT, () => {
+  console.log("Service started");
+});
