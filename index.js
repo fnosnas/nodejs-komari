@@ -23,7 +23,7 @@ const CFIP = process.env.CFIP || "cdns.doon.eu.org";
 const CFPORT = process.env.CFPORT || 443;
 const NAME = process.env.NAME || "Node";
 
-/* ========= 路径 ========= */
+/* ========= 准备目录 ========= */
 if (!fs.existsSync(FILE_PATH)) fs.mkdirSync(FILE_PATH, { recursive: true });
 
 const XRAY = path.join(FILE_PATH, "xray");
@@ -41,7 +41,7 @@ async function download(url, file) {
   fs.chmodSync(file, 0o755);
 }
 
-/* ========= Komari（自动拉起 + 低资源 + 静默） ========= */
+/* ========= Komari（✅ 参数已修正） ========= */
 function startKomari() {
   if (!NEZHA_SERVER || !NEZHA_KEY) return;
 
@@ -50,8 +50,8 @@ function startKomari() {
     [
       "-e", NEZHA_SERVER,
       "-t", NEZHA_KEY,
-      "--disable-update",
-      "--disable-plugin"
+      "--disable-auto-update",   // ✅ 正确参数
+      "--disable-web-ssh"        // ✅ 关掉远程控制，减资源
     ],
     { stdio: ["ignore", "inherit", "inherit"] }
   );
@@ -61,7 +61,7 @@ function startKomari() {
   });
 }
 
-/* ========= Argo（完全静默 + 自动拉起） ========= */
+/* ========= Argo（静默运行） ========= */
 function startArgo() {
   const env = { ...process.env };
   if (ARGO_AUTH) env.TUNNEL_TOKEN = ARGO_AUTH;
@@ -82,7 +82,7 @@ function startArgo() {
   });
 }
 
-/* ========= 主逻辑 ========= */
+/* ========= 主流程 ========= */
 async function main() {
   const isArm = os.arch().includes("arm");
 
