@@ -1,15 +1,12 @@
-FROM node:alpine3.20
+FROM node:18-bookworm-slim
 
-WORKDIR /tmp
-
+WORKDIR /app
 COPY . .
 
-EXPOSE 3000/tcp
+RUN apt-get update && \
+    apt-get install -y ca-certificates curl && \
+    npm install --production && \
+    rm -rf /var/lib/apt/lists/*
 
-RUN apk update && apk upgrade &&\
-    apk add --no-cache openssl curl gcompat iproute2 coreutils &&\
-    apk add --no-cache bash &&\
-    chmod +x index.js &&\
-    npm install
-
-CMD ["node", "index.js"]
+EXPOSE 3000
+CMD ["node", "
