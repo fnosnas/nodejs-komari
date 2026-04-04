@@ -37,13 +37,13 @@ const ARGO = path.join(FILE_PATH, "argo_bin");
 const KOMARI = path.join(FILE_PATH, "komari_agent");
 const XRAY_CONF = path.join(FILE_PATH, "config.json");
 
-/* ================= 仅保留极少日志 ================= */
+/* ================= 极简日志 ================= */
 function info(msg) {
   console.log(msg);
 }
 
 /* ================= 下载工具 ================= */
-async function download(name, url, savePath) {
+async function download(url, savePath) {
   if (!url) return;
   if (fs.existsSync(savePath)) return;
 
@@ -143,12 +143,18 @@ function isTokenLike(str) {
   return /^[A-Za-z0-9=._-]{100,400}$/.test(str || "");
 }
 
-/* ================= Argo（只有它挂了才提示） ================= */
+/* ================= Argo（只有它挂了才打印） ================= */
+/*
+  这里恢复成“调试版里已经验证能启动”的 TUNNEL_TOKEN 环境变量方式。
+  这样更接近你之前实际跑起来的行为，同时仍然不经过 shell。
+*/
 function startArgo() {
   if (!fs.existsSync(ARGO)) return;
   if (argoProc && !argoProc.killed) return;
 
   if (isTokenLike(ARGO_AUTH)) {
+    const env = { ...process.env, TUNNEL_TOKEN: ARGO_AUTH };
+
     argoProc = spawn(
       ARGO,
       [
@@ -156,10 +162,10 @@ function startArgo() {
         "--no-autoupdate",
         "--protocol", "http2",
         "--loglevel", "error",
-        "run",
-        "--token", ARGO_AUTH
+        "run"
       ],
       {
+        env,
         stdio: ["ignore", "ignore", "ignore"]
       }
     );
@@ -234,17 +240,17 @@ async function main() {
     ? "https://arm64.ssss.nyc.mn/bot"
     : "https://amd64.ssss.nyc.mn/bot";
 
-  await download("Xray", xrayUrl, XRAY);
-  await download("Argo", argoUrl, ARGO);
+  await download(xrayUrl, XRAY);
+  await download(argoUrl, ARGO);
 
   if (NEZHA_SERVER && NEZHA_KEY) {
     const komariUrl = getKomariUrl();
-    await download("Komari", komariUrl, KOMARI);
+    await download(komariUrl, KOMARI);
   }
 
   startXray();
 
-  /* 给 Xray 一点启动时间，再拉起 Argo / Komari */
+  /* 给 Xray 一点启动时间 */
   setTimeout(() => {
     startArgo();
   }, 1500);
@@ -269,7 +275,7 @@ app.get(`/${SUB_PATH}`, (_, res) => {
     return res.send("ARGO_DOMAIN not set");
   }
 
-  const nodeName = NAME || "world";
+  const nodeName = NAME || "Komari-Node";
 
   const vlessSub =
     `vless://${UUID}@${CFIP}:${CFPORT}` +
