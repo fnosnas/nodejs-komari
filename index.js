@@ -1,7 +1,6 @@
 const os = require("os");
 const fs = require("fs");
 const path = require("path");
-const net = require("net");
 const axios = require("axios");
 const express = require("express");
 const { spawn } = require("child_process");
@@ -19,11 +18,14 @@ const NEZHA_KEY = process.env.NEZHA_KEY || "";
 
 const ARGO_DOMAIN = process.env.ARGO_DOMAIN || "";
 const ARGO_AUTH = process.env.ARGO_AUTH || "";
-const ARGO_PORT = 8001; // 与你原始代码一致
+const ARGO_PORT = 8001;
 
 const CFIP = process.env.CFIP || "cdns.doon.eu.org";
 const CFPORT = process.env.CFPORT || 443;
 const NAME = process.env.NAME || "Komari-Node";
+
+/* ================= 守护重启延时（30秒） ================= */
+const RESTART_DELAY = 30000;
 
 /* ================= 路径 ================= */
 if (!fs.existsSync(FILE_PATH)) {
@@ -35,101 +37,15 @@ const ARGO = path.join(FILE_PATH, "argo_bin");
 const KOMARI = path.join(FILE_PATH, "komari_agent");
 const XRAY_CONF = path.join(FILE_PATH, "config.json");
 
-/* ================= 日志工具 ================= */
-function ts() {
-  return new Date().toISOString();
-}
-
-function log(tag, msg) {
-  console.log(`[${ts()}] [${tag}] ${msg}`);
-}
-
-function short(str, max = 180) {
-  if (!str) return "";
-  const s = String(str).replace(/\s+/g, " ").trim();
-  return s.length > max ? s.slice(0, max) + " ..." : s;
-}
-
-function safeMask(str, keep = 6) {
-  if (!str) return "";
-  if (str.length <= keep * 2) return "*".repeat(str.length);
-  return str.slice(0, keep) + "***" + str.slice(-keep);
-}
-
-function attachProcessLogs(name, proc) {
-  if (!proc) return;
-
-  log(name, `spawned pid=${proc.pid}`);
-
-  if (proc.stdout) {
-    proc.stdout.on("data", (buf) => {
-      const text = String(buf).split(/\r?\n/).filter(Boolean);
-      for (const line of text) {
-        log(name, `stdout: ${line}`);
-      }
-    });
-  }
-
-  if (proc.stderr) {
-    proc.stderr.on("data", (buf) => {
-      const text = String(buf).split(/\r?\n/).filter(Boolean);
-      for (const line of text) {
-        log(name, `stderr: ${line}`);
-      }
-    });
-  }
-
-  proc.on("error", (err) => {
-    log(name, `process error: ${err.message}`);
-  });
-
-  proc.on("exit", (code, signal) => {
-    log(name, `exited code=${code} signal=${signal}`);
-  });
-
-  proc.on("close", (code, signal) => {
-    log(name, `closed code=${code} signal=${signal}`);
-  });
-}
-
-/* ================= TCP 检查 Xray 监听 ================= */
-function checkPort(host, port, label = "TCP") {
-  return new Promise((resolve) => {
-    const socket = net.createConnection({ host, port });
-    let done = false;
-
-    const finish = (ok, reason) => {
-      if (done) return;
-      done = true;
-      socket.destroy();
-      if (ok) {
-        log(label, `${host}:${port} reachable`);
-      } else {
-        log(label, `${host}:${port} unreachable -> ${reason}`);
-      }
-      resolve(ok);
-    };
-
-    socket.setTimeout(2500);
-    socket.on("connect", () => finish(true, "connected"));
-    socket.on("timeout", () => finish(false, "timeout"));
-    socket.on("error", (err) => finish(false, err.message));
-  });
+/* ================= 仅保留极少日志 ================= */
+function info(msg) {
+  console.log(msg);
 }
 
 /* ================= 下载工具 ================= */
 async function download(name, url, savePath) {
-  if (!url) {
-    log("Download", `${name} url empty, skip`);
-    return;
-  }
-
-  if (fs.existsSync(savePath)) {
-    log("Download", `${name} already exists -> ${savePath}`);
-    return;
-  }
-
-  log("Download", `${name} start -> ${url}`);
+  if (!url) return;
+  if (fs.existsSync(savePath)) return;
 
   const response = await axios({
     method: "get",
@@ -146,7 +62,6 @@ async function download(name, url, savePath) {
   });
 
   fs.chmodSync(savePath, 0o755);
-  log("Download", `${name} saved -> ${savePath}`);
 }
 
 /* ================= Komari 下载地址 ================= */
@@ -154,10 +69,7 @@ function getKomariUrl() {
   const platform = os.platform();
   const arch = os.arch();
 
-  if (platform !== "linux") {
-    log("Komari", `unsupported platform: ${platform}`);
-    return null;
-  }
+  if (platform !== "linux") return null;
 
   if (arch === "x64") {
     return "https://github.com/komari-monitor/komari-agent/releases/download/1.1.80/komari-agent-linux-amd64";
@@ -167,7 +79,6 @@ function getKomariUrl() {
     return "https://github.com/komari-monitor/komari-agent/releases/download/1.1.80/komari-agent-linux-arm64";
   }
 
-  log("Komari", `unsupported arch: ${arch}`);
   return null;
 }
 
@@ -176,10 +87,10 @@ let xrayProc = null;
 let argoProc = null;
 let komariProc = null;
 
-/* ================= Xray ================= */
+/* ================= Xray（静默守护） ================= */
 function startXray() {
   const config = {
-    log: { loglevel: "warning" },
+    log: { loglevel: "none" },
     inbounds: [
       {
         port: ARGO_PORT,
@@ -210,24 +121,20 @@ function startXray() {
     outbounds: [{ protocol: "freedom" }]
   };
 
-  fs.writeFileSync(XRAY_CONF, JSON.stringify(config, null, 2));
-  log("Xray", `config written -> ${XRAY_CONF}`);
-  log("Xray", `expect listen on 127.0.0.1:${ARGO_PORT}, path=/vless-argo`);
+  fs.writeFileSync(XRAY_CONF, JSON.stringify(config));
 
   xrayProc = spawn(XRAY, ["-c", XRAY_CONF], {
-    stdio: ["ignore", "pipe", "pipe"]
+    stdio: ["ignore", "ignore", "ignore"]
   });
-
-  attachProcessLogs("Xray", xrayProc);
-
-  setTimeout(() => checkPort("127.0.0.1", ARGO_PORT, "XrayCheck"), 2000);
-  setTimeout(() => checkPort("127.0.0.1", ARGO_PORT, "XrayCheck"), 5000);
-  setTimeout(() => checkPort("127.0.0.1", ARGO_PORT, "XrayCheck"), 10000);
 
   xrayProc.on("exit", () => {
     xrayProc = null;
-    log("Xray", "restart in 5s");
-    setTimeout(startXray, 5000);
+    setTimeout(startXray, RESTART_DELAY);
+  });
+
+  xrayProc.on("error", () => {
+    xrayProc = null;
+    setTimeout(startXray, RESTART_DELAY);
   });
 }
 
@@ -236,83 +143,60 @@ function isTokenLike(str) {
   return /^[A-Za-z0-9=._-]{100,400}$/.test(str || "");
 }
 
-/* ================= Argo ================= */
+/* ================= Argo（只有它挂了才提示） ================= */
 function startArgo() {
-  if (!fs.existsSync(ARGO)) {
-    log("Argo", `binary not found -> ${ARGO}`);
-    return;
-  }
-
-  if (argoProc && !argoProc.killed) {
-    log("Argo", "already running, skip");
-    return;
-  }
+  if (!fs.existsSync(ARGO)) return;
+  if (argoProc && !argoProc.killed) return;
 
   if (isTokenLike(ARGO_AUTH)) {
-    const env = { ...process.env, TUNNEL_TOKEN: ARGO_AUTH };
-
-    log("Argo", `mode=token, token=${safeMask(ARGO_AUTH)}`);
-    log("Argo", "command: tunnel --no-autoupdate --protocol http2 --loglevel debug run");
-
-    argoProc = spawn(
-      ARGO,
-      ["tunnel", "--no-autoupdate", "--protocol", "http2", "--loglevel", "debug", "run"],
-      {
-        env,
-        stdio: ["ignore", "pipe", "pipe"]
-      }
-    );
-  } else {
-    log("Argo", `mode=url, target=http://127.0.0.1:${ARGO_PORT}`);
-    log("Argo", "command: tunnel --no-autoupdate --protocol http2 --loglevel debug --url http://127.0.0.1:8001");
-
     argoProc = spawn(
       ARGO,
       [
         "tunnel",
         "--no-autoupdate",
-        "--protocol",
-        "http2",
-        "--loglevel",
-        "debug",
-        "--url",
-        `http://127.0.0.1:${ARGO_PORT}`
+        "--protocol", "http2",
+        "--loglevel", "error",
+        "run",
+        "--token", ARGO_AUTH
       ],
       {
-        stdio: ["ignore", "pipe", "pipe"]
+        stdio: ["ignore", "ignore", "ignore"]
+      }
+    );
+  } else {
+    argoProc = spawn(
+      ARGO,
+      [
+        "tunnel",
+        "--no-autoupdate",
+        "--protocol", "http2",
+        "--loglevel", "error",
+        "--url", `http://127.0.0.1:${ARGO_PORT}`
+      ],
+      {
+        stdio: ["ignore", "ignore", "ignore"]
       }
     );
   }
 
-  attachProcessLogs("Argo", argoProc);
-
-  argoProc.on("exit", () => {
+  argoProc.on("exit", (code, signal) => {
     argoProc = null;
-    log("Argo", "restart in 5s");
-    setTimeout(startArgo, 5000);
+    info(`[Argo] exited code=${code} signal=${signal}, restart in 30s`);
+    setTimeout(startArgo, RESTART_DELAY);
+  });
+
+  argoProc.on("error", (err) => {
+    argoProc = null;
+    info(`[Argo] error: ${err.message}, restart in 30s`);
+    setTimeout(startArgo, RESTART_DELAY);
   });
 }
 
-/* ================= Komari ================= */
+/* ================= Komari（静默守护） ================= */
 function startKomari() {
-  if (!NEZHA_SERVER || !NEZHA_KEY) {
-    log("Komari", "NEZHA_SERVER or NEZHA_KEY empty, skip");
-    return;
-  }
-
-  if (!fs.existsSync(KOMARI)) {
-    log("Komari", `binary not found -> ${KOMARI}`);
-    return;
-  }
-
-  if (komariProc && !komariProc.killed) {
-    log("Komari", "already running, skip");
-    return;
-  }
-
-  log("Komari", `endpoint=${NEZHA_SERVER}`);
-  log("Komari", `token=${safeMask(NEZHA_KEY)}`);
-  log("Komari", "command: -e <endpoint> -t <token> --disable-auto-update --disable-web-ssh");
+  if (!NEZHA_SERVER || !NEZHA_KEY) return;
+  if (!fs.existsSync(KOMARI)) return;
+  if (komariProc && !komariProc.killed) return;
 
   komariProc = spawn(
     KOMARI,
@@ -323,33 +207,23 @@ function startKomari() {
       "--disable-web-ssh"
     ],
     {
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: ["ignore", "ignore", "ignore"]
     }
   );
 
-  attachProcessLogs("Komari", komariProc);
-
   komariProc.on("exit", () => {
     komariProc = null;
-    log("Komari", "restart in 5s");
-    setTimeout(startKomari, 5000);
+    setTimeout(startKomari, RESTART_DELAY);
+  });
+
+  komariProc.on("error", () => {
+    komariProc = null;
+    setTimeout(startKomari, RESTART_DELAY);
   });
 }
 
 /* ================= 主逻辑 ================= */
 async function main() {
-  log("Boot", `platform=${os.platform()} arch=${os.arch()}`);
-  log("Boot", `PORT=${PORT}`);
-  log("Boot", `FILE_PATH=${FILE_PATH}`);
-  log("Boot", `ARGO_PORT=${ARGO_PORT}`);
-  log("Boot", `UUID=${UUID}`);
-  log("Boot", `CFIP=${CFIP}`);
-  log("Boot", `CFPORT=${CFPORT}`);
-  log("Boot", `ARGO_DOMAIN=${ARGO_DOMAIN}`);
-  log("Boot", `ARGO_AUTH=${ARGO_AUTH ? safeMask(ARGO_AUTH) : "(empty)"}`);
-  log("Boot", `NEZHA_SERVER=${NEZHA_SERVER || "(empty)"}`);
-  log("Boot", `NEZHA_KEY=${NEZHA_KEY ? safeMask(NEZHA_KEY) : "(empty)"}`);
-
   const isArm = os.arch().includes("arm");
 
   const xrayUrl = isArm
@@ -368,17 +242,11 @@ async function main() {
     await download("Komari", komariUrl, KOMARI);
   }
 
-  log("Boot", `xray exists=${fs.existsSync(XRAY)} path=${XRAY}`);
-  log("Boot", `argo exists=${fs.existsSync(ARGO)} path=${ARGO}`);
-  log("Boot", `komari exists=${fs.existsSync(KOMARI)} path=${KOMARI}`);
-
   startXray();
 
-  // 给 Xray 一点启动时间，再启动 Argo
+  /* 给 Xray 一点启动时间，再拉起 Argo / Komari */
   setTimeout(() => {
-    checkPort("127.0.0.1", ARGO_PORT, "PreArgoCheck").then(() => {
-      startArgo();
-    });
+    startArgo();
   }, 1500);
 
   setTimeout(() => {
@@ -391,41 +259,8 @@ app.get("/", (_, res) => {
   res.send("Hello world!");
 });
 
-app.get("/debug", async (_, res) => {
-  const tcpOk = await checkPort("127.0.0.1", ARGO_PORT, "DebugCheck");
-  res.json({
-    now: ts(),
-    env: {
-      PORT,
-      FILE_PATH,
-      SUB_PATH,
-      ARGO_PORT,
-      UUID,
-      ARGO_DOMAIN,
-      CFIP,
-      CFPORT,
-      NAME,
-      hasArgoAuth: !!ARGO_AUTH,
-      hasNezhaServer: !!NEZHA_SERVER,
-      hasNezhaKey: !!NEZHA_KEY
-    },
-    files: {
-      xray: fs.existsSync(XRAY),
-      argo: fs.existsSync(ARGO),
-      komari: fs.existsSync(KOMARI),
-      xrayConf: fs.existsSync(XRAY_CONF)
-    },
-    pids: {
-      xray: xrayProc ? xrayProc.pid : null,
-      argo: argoProc ? argoProc.pid : null,
-      komari: komariProc ? komariProc.pid : null
-    },
-    tcp8001: tcpOk
-  });
-});
-
 /*
-  严格保持你原始订阅逻辑：
+  保持你原始订阅逻辑：
   address = CFIP
   sni / host = ARGO_DOMAIN
 */
@@ -434,7 +269,7 @@ app.get(`/${SUB_PATH}`, (_, res) => {
     return res.send("ARGO_DOMAIN not set");
   }
 
-  const nodeName = NAME || "Komari-Node";
+  const nodeName = NAME || "world";
 
   const vlessSub =
     `vless://${UUID}@${CFIP}:${CFPORT}` +
@@ -451,9 +286,10 @@ app.get(`/${SUB_PATH}`, (_, res) => {
 
 /* ================= 启动 ================= */
 main().catch((err) => {
-  log("Boot", `fatal error: ${err.message}`);
+  info(`[Boot] fatal error: ${err.message}`);
 });
 
 app.listen(PORT, () => {
-  log("HTTP", `listening on ${PORT}`);
+  info("Service started");
 });
+``
