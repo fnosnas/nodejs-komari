@@ -24,3 +24,35 @@
 容器平台启动命令直接填：
 ```
 node index.js
+```
+docker run 一条命令搞定：
+```
+docker run -d \
+  --name komari \
+  --restart always \
+  -e NEZHA_SERVER="你的服务器地址" \
+  -e NEZHA_KEY="你的Key" \
+  -e ARGO_DOMAIN="你的域名" \
+  -e ARGO_AUTH="你的Token" \
+  -p 3000:3000 \
+  ghcr.io/fnosnas/komari:latest
+```
+不换行的版本：
+```
+docker run -d --name komari --restart always -e NEZHA_SERVER="你的服务器地址" -e NEZHA_KEY="你的Key" -e ARGO_DOMAIN="你的域名" -e ARGO_AUTH="你的Token" -p 3000:3000 ghcr.io/fnosnas/komari:latest
+```
+常用管理命令：   
+# 查看运行日志
+docker logs -f komari
+
+# 查看运行状态
+docker ps | grep komari
+
+# 停止
+docker stop komari
+
+# 删除重建（更新变量时用）
+docker rm -f komari && docker run ...
+
+# 更新镜像
+docker pull ghcr.io/fnosnas/komari:latest && docker rm -f komari && docker run ...
