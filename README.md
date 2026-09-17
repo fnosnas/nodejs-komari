@@ -20,8 +20,11 @@
 | NAME | 否 | Vls | 节点名称前缀 |
 | FILE_PATH | 否 | ./tmp | 运行目录 |
 | SUB_PATH | 否 | sub | 订阅路径 |
-
-容器平台启动命令直接填：
+构建命令:
+```
+npm install
+```
+启动运行命令：
 ```
 node index.js
 ```
