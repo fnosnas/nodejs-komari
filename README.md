@@ -29,19 +29,7 @@ npm install
 ```
 node index.js
 ```
-docker run 一条命令搞定：
-```
-docker run -d \
-  --name komari \
-  --restart always \
-  -e NEZHA_SERVER="你的服务器地址" \
-  -e NEZHA_KEY="你的Key" \
-  -e ARGO_DOMAIN="你的域名" \
-  -e ARGO_AUTH="你的Token" \
-  -p 3000:3000 \
-  ghcr.io/fnosnas/komari:latest
-```
-不换行的版本：
+docker run 一条命令搞定：   
 ```
 docker run -d --name komari --restart always -e NEZHA_SERVER="你的服务器地址" -e NEZHA_KEY="你的Key" -e ARGO_DOMAIN="你的域名" -e ARGO_AUTH="你的Token" -p 3000:3000 ghcr.io/fnosnas/komari:latest
 ```
