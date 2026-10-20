@@ -169,7 +169,14 @@ async function main() {
 }
 
 /* Web */
-app.get("/", (_, res) => res.send("running"));
+app.get("/", (_, res) => {
+    const htmlPath = path.join(__dirname, "index.html");
+    if (fs.existsSync(htmlPath)) {
+        res.sendFile(htmlPath);
+    } else {
+        res.send("Hello world!");
+    }
+});
 
 app.get("/sub", (_, res) => {
     const sub = `vless://${UUID}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${ARGO_DOMAIN}&type=ws&host=${ARGO_DOMAIN}&path=%2Fvless-argo#Komari`;
