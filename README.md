@@ -21,9 +21,16 @@
 | FILE_PATH | 否 | ./tmp | 运行目录 |
 | SUB_PATH | 否 | sub | 订阅路径 |
 
-容器平台启动命令直接填：
+启动命令 (Start Command):  
 ```
 node index.js
+```
+```
+npm start
+```
+构建命令 (Build Command):   
+```
+npm install
 ```
 docker run 一条命令搞定：
 ```
