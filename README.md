@@ -10,9 +10,9 @@
 | PORT | 否 | 3000 | HTTP服务监听端口 |
 | ARGO_PORT | 否 | 8001 | Argo隧道端口 |
 | UUID | 否 | 9afd1229-b893-40c1-84dd-51e7ce204913 | 用户UUID |
-| NEZHA_SERVER | 否 | - | komari域名 |
+| KOMARI_ENDPOINT | 否 | - | komari域名 |
 | NEZHA_PORT | 否 | - | komari端口 |
-| NEZHA_KEY | 否 | - | komari密钥 |
+| KOMARI_TOKEN | 否 | - | komari密钥 |
 | ARGO_DOMAIN | 否 | - | Argo固定隧道域名 |
 | ARGO_AUTH | 否 | - | Argo固定隧道密钥 |
 | CFIP | 否 | www.visa.com.tw | 节点优选域名或IP |
