@@ -11,7 +11,6 @@
 | ARGO_PORT | 否 | 8001 | Argo隧道端口 |
 | UUID | 否 | 9afd1229-b893-40c1-84dd-51e7ce204913 | 用户UUID |
 | KOMARI_ENDPOINT | 否 | - | komari域名 |
-| NEZHA_PORT | 否 | - | komari端口 |
 | KOMARI_TOKEN | 否 | - | komari密钥 |
 | ARGO_DOMAIN | 否 | - | Argo固定隧道域名 |
 | ARGO_AUTH | 否 | - | Argo固定隧道密钥 |
